@@ -1,8 +1,10 @@
 import base64
+import csv
 import os
 import rsa
 import tkinter as tk
 
+from encryption_helper import EncryptionHelper
 from tkinter import filedialog
 from tkinter import messagebox
 
@@ -13,30 +15,34 @@ class MainApplication(tk.Frame):
         self.configure_gui()
         self.create_widgets()
 
+        self.key_size = 2048
         self.public_key_file = "public_key.pem"
         self.private_key_file = "private_key.pem"
         self.saved_keys_file = "saved_keys.csv"
 
         if not os.path.exists(self.public_key_file):
-            self.generate_keys(2048)
+            self.generate_keys(self.key_size)
 
         if not os.path.exists(self.saved_keys_file):
             with open(self.saved_keys_file, "w+") as hFile:
                 # do nothing, just create an empty file for later
                 pass
 
+        self.saved_keys = {}
+        self.load_saved_keys()
+
     def clear_target_path(self):
         self.target_path.delete(0, tk.END)
 
     def configure_gui(self):
-        self.master.title("Encryptor")
-        self.master.geometry("400x150")
+        self.master.title("pyCryptor")
+        self.master.geometry("400x200")
         self.master.resizable(False, False)
 
         self.grid(padx = 50, pady = 20)
         self.master.columnconfigure((0, 2), weight = 1)
         self.master.columnconfigure(1, weight = 3)
-        self.master.rowconfigure((0, 1, 2, 3, 4), weight = 1)
+        self.master.rowconfigure((0, 1, 2, 3, 4, 5), weight = 1)
 
     def create_widgets(self):
         # first define the widgets then layout is specified below
@@ -71,6 +77,9 @@ class MainApplication(tk.Frame):
         self.key_options = tk.OptionMenu(self.master, self.selected_key, *available_keys)
         self.view_key_management_button = tk.Button(self.master, text = "Keys", command = self.show_key_management_window)
 
+        # start button
+        self.start_button = tk.Button(self.master, text = "Start", command = self.start_process)
+
         # grid layout
         # path info
         self.target_path_label.grid(row = 0, column = 0)
@@ -95,6 +104,9 @@ class MainApplication(tk.Frame):
         self.direction_frame.grid(row = 4, column = 1)
         self.direction_encrypt_radio.grid(row = 0, column = 1)
         self.direction_decrypt_radio.grid(row = 0, column = 2)
+
+        # start button
+        self.start_button.grid(row = 5, column = 1, sticky = "ew")
 
     def generate_keys(self, size):
         public_key, private_key = rsa.newkeys(size)
@@ -134,7 +146,7 @@ class MainApplication(tk.Frame):
         self.load_saved_keys_listbox()
 
         self.key_manager.add_key_button = tk.Button(self.key_manager, text = "Add New Key", command = self.show_add_key_window)
-        self.key_manager.remove_key_button = tk.Button(self.key_manager, text = "Remove Key", command = self.remove_saved_key)
+        self.key_manager.remove_key_button = tk.Button(self.key_manager, text = "Remove Key", command = self.remove_selected_saved_key)
 
         # grid layout
         self.key_manager.saved_keys_listbox.grid(row = 0, column = 0, columnspan = 2, sticky = "ew")
@@ -165,22 +177,45 @@ class MainApplication(tk.Frame):
         self.add_key_window.key_text.grid(row = 1, column = 1, sticky = "ew")
         self.add_key_window.save_button.grid(row = 2, column = 1, sticky = "ew")
 
+    def load_saved_keys(self):
+        self.saved_keys = {}
+
+        with open(self.public_key_file, "rb") as hFile:
+            self.saved_keys["My Public Key"] = hFile.read().decode("UTF-8")
+
+        with open(self.private_key_file, "rb") as hFile:
+            self.saved_keys["My Private Key"] = hFile.read().decode("UTF-8")
+
+        with open(self.saved_keys_file, "r") as hFile:
+            csv_reader = csv.reader(hFile, delimiter = ',', quotechar = '"')
+            for line in csv_reader:
+                if line:
+                    self.saved_keys[line[0]] = base64.b64decode(line[1])
+
+    def save_keys_to_file(self):
+        with open(self.saved_keys_file, "w") as hFile:
+            csv_writer = csv.writer(hFile, delimiter = ',', quotechar = '"')
+            for saved_key in self.saved_keys:
+                # encode then decode so it just saves the string without any byte prefix
+                encoded_key = base64.b64encode(self.saved_keys[saved_key].encode("utf-8")).decode("utf-8")
+
+                csv_writer.writerow([saved_key, encoded_key])
+
     def load_saved_keys_listbox(self):
-        self.saved_keys = []
         self.key_manager.saved_keys_listbox.delete(0, tk.END)
+        self.load_saved_keys()
 
-        with open(self.saved_keys_file) as hFile:
-            saved_lines = [line.rstrip() for line in hFile]
+        for i in range(len(self.saved_keys)):
+            self.key_manager.saved_keys_listbox.insert(i + 1, list(self.saved_keys)[i])
 
-        for i in range(len(saved_lines)):
-            splits = saved_lines[i].split("\",\"")
-            name = splits[0].lstrip("\"").rstrip("\"")
-            key = splits[1].lstrip("\"").rstrip("\"")
-            self.key_manager.saved_keys_listbox.insert(i + 1, name)
-            self.saved_keys.append({ "name": name, "key": key })
+    def remove_selected_saved_key(self):
+        key_name = self.key_manager.saved_keys_listbox.get(tk.ACTIVE)
+        if key_name == "My Public Key" or key_name == "My Private Key":
+            self.generate_keys(self.key_size)
+            return
 
-    def remove_saved_key(self, key_name):
-        pass
+        del self.saved_keys[key_name]
+        self.save_keys_to_file()
 
     def add_key(self):
         name = self.add_key_window.key_name_textbox.get().strip()
@@ -189,21 +224,26 @@ class MainApplication(tk.Frame):
         if not name:
             messagebox.showerror(title = "Cannot Add Key", message = "All keys must have a name")
             return
-        elif name in [k["name"] for k in self.saved_keys]:
+        elif name in self.saved_keys:
             messagebox.showerror(title = "Cannot Add Key", message = "Key name already in use")
             return
         elif not key:
             messagebox.showerror(title = "Cannot Add Key", message = "All keys must have a key")
             return
 
-        key = base64.b64encode(key.encode("ascii"))
-        with open(self.saved_keys_file, "a") as hFile:
-            hFile.write("\"%s\",\"%s\"\r\n" % (name, key))
+        self.saved_keys[name] = key
+        self.save_keys_to_file()
 
         messagebox.showinfo(title = "Success", message = "Key Added")
         self.add_key_window.destroy()
         self.add_key_window.update()
         self.load_saved_keys_listbox()
+
+    def start_process(self):
+        path = self.target_path.get()
+        key = self.saved_keys[self.selected_key.get()]
+
+        encryption_helper = EncryptionHelper(key)
 
 if __name__ == "__main__":
     root = tk.Tk()
