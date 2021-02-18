@@ -1,9 +1,9 @@
 import base64
 import csv
 import os
-import rsa
 import tkinter as tk
 
+from Crypto.PublicKey import RSA
 from encryption_helper import EncryptionHelper
 from tkinter import filedialog
 from tkinter import messagebox
@@ -12,8 +12,6 @@ class MainApplication(tk.Frame):
     def __init__(self, master):
         tk.Frame.__init__(self, master)
         self.master = master
-        self.configure_gui()
-        self.create_widgets()
 
         self.key_size = 2048
         self.public_key_file = "public_key.pem"
@@ -30,6 +28,9 @@ class MainApplication(tk.Frame):
 
         self.saved_keys = {}
         self.load_saved_keys()
+
+        self.configure_gui()
+        self.create_widgets()
 
     def clear_target_path(self):
         self.target_path.delete(0, tk.END)
@@ -65,16 +66,16 @@ class MainApplication(tk.Frame):
 
         self.direction = tk.BooleanVar()
         self.direction_label = tk.Label(self.master, text = "Direction: ")
-        self.direction_encrypt_radio = tk.Radiobutton(self.direction_frame, text = "Encrypt", variable = self.direction, value = 0, command = self.show_encryption_keys)
-        self.direction_decrypt_radio = tk.Radiobutton(self.direction_frame, text = "Decrypt", variable = self.direction, value = 1, command = self.show_decryption_keys)
+        self.direction_encrypt_radio = tk.Radiobutton(self.direction_frame, text = "Encrypt", variable = self.direction, value = 0, command = self.set_allowed_keys)
+        self.direction_decrypt_radio = tk.Radiobutton(self.direction_frame, text = "Decrypt", variable = self.direction, value = 1, command = self.set_allowed_keys)
 
         # keys
         self.selected_key = tk.StringVar()
-        available_keys = [ "My Private Key" ]
-        self.selected_key.set(available_keys[0])
+        self.selected_key.set(list(self.saved_keys)[0])
+        self.allowed_keys = {k: self.saved_keys[k] for k in self.saved_keys if k != "My Private Key"} # default is encrypt, allow all keys except my private key
 
         self.target_key_label = tk.Label(self.master, text = "Key: ")
-        self.key_options = tk.OptionMenu(self.master, self.selected_key, *available_keys)
+        self.key_options = tk.OptionMenu(self.master, self.selected_key, *self.allowed_keys)
         self.view_key_management_button = tk.Button(self.master, text = "Keys", command = self.show_key_management_window)
 
         # start button
@@ -108,30 +109,42 @@ class MainApplication(tk.Frame):
         # start button
         self.start_button.grid(row = 5, column = 1, sticky = "ew")
 
+    def set_allowed_keys(self):
+        if self.direction.get():
+            # for decrypting, we can only use our private key
+            self.allowed_keys = {"My Private Key": self.saved_keys["My Private Key"]}
+        else:
+            # for encrypting, we can use anything but our private key
+            self.allowed_keys = {k: self.saved_keys[k] for k in self.saved_keys if k != "My Private Key"}
+
+        key_options_menu = self.key_options["menu"]
+        key_options_menu.delete(0, tk.END)
+
+        for allowed_key in self.allowed_keys:
+            key_options_menu.add_command(label = allowed_key, command = lambda value = allowed_key: self.selected_key.set(value))
+
+        self.selected_key.set(list(self.allowed_keys)[0])
+
     def generate_keys(self, size):
-        public_key, private_key = rsa.newkeys(size)
+        key_pair = RSA.generate(size)
 
-        with open(self.public_key_file, "w") as hFile:
-            hFile.write(public_key.save_pkcs1().decode())
+        with open(self.public_key_file, "wb") as hFile:
+            hFile.write(key_pair.public_key().export_key("PEM"))
 
-        with open(self.private_key_file, "w") as hFile:
-            hFile.write(private_key.save_pkcs1().decode())
+        with open(self.private_key_file, "wb") as hFile:
+            hFile.write(key_pair.export_key("PEM"))
 
     def show_browse_dialog(self):
-        if self.target_type == 0:
-            selection = tk.filedialog.askopenfile(mode = "r")
-        else:
+        if self.target_type.get():
             selection = tk.filedialog.askdirectory(mustexist = True)
-
-        if selection is not None:
-            self.target_path.delete(0, tk.END)
-            self.target_path.insert(0, selection)
-
-    def show_encryption_keys(self):
-        pass
-
-    def show_decryption_keys(self):
-        pass
+            if selection is not None:
+                self.target_path.delete(0, tk.END)
+                self.target_path.insert(0, selection)
+        else:
+            selection = tk.filedialog.askopenfile(mode = "r", mustexist = True)
+            if selection is not None:
+                self.target_path.delete(0, tk.END)
+                self.target_path.insert(0, selection.name)
 
     def show_key_management_window(self):
         self.key_manager = tk.Toplevel(self.master)
@@ -231,6 +244,10 @@ class MainApplication(tk.Frame):
             messagebox.showerror(title = "Cannot Add Key", message = "All keys must have a key")
             return
 
+        if "RSA Public Key" not in key and "RSA Private Key" not in key:
+            messagebox.showerror(title = "Invalid Key", message = "Key must be an RSA public or private key")
+            return
+
         self.saved_keys[name] = key
         self.save_keys_to_file()
 
@@ -241,9 +258,23 @@ class MainApplication(tk.Frame):
 
     def start_process(self):
         path = self.target_path.get()
-        key = self.saved_keys[self.selected_key.get()]
+        selected_key = self.selected_key.get()
+        key = self.saved_keys[selected_key]
 
-        encryption_helper = EncryptionHelper(key)
+        if selected_key not in self.allowed_keys:
+            messagebox.showerror(title = "Bad Request", message = "Key is not allowed for this encryption direction")
+            return
+
+        encryption_helper = EncryptionHelper(key, path)
+        try:
+            if self.direction.get():
+                encryption_helper.decrypt()
+            else:
+                encryption_helper.encrypt()
+
+            messagebox.showinfo(title = "Success", message = "Process finished")
+        except Exception as ex:
+            messagebox.showerror(title = "Process failed", message = ex)
 
 if __name__ == "__main__":
     root = tk.Tk()
