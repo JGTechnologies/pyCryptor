@@ -141,7 +141,7 @@ class MainApplication(tk.Frame):
                 self.target_path.delete(0, tk.END)
                 self.target_path.insert(0, selection)
         else:
-            selection = tk.filedialog.askopenfile(mode = "r", mustexist = True)
+            selection = tk.filedialog.askopenfile(mode = "r")
             if selection is not None:
                 self.target_path.delete(0, tk.END)
                 self.target_path.insert(0, selection.name)
@@ -272,6 +272,7 @@ class MainApplication(tk.Frame):
             else:
                 encryption_helper.encrypt()
 
+            self.target_path.set("")
             messagebox.showinfo(title = "Success", message = "Process finished")
         except Exception as ex:
             messagebox.showerror(title = "Process failed", message = ex)
