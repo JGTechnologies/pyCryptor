@@ -272,7 +272,7 @@ class MainApplication(tk.Frame):
             else:
                 encryption_helper.encrypt()
 
-            self.target_path.set("")
+            self.target_path.delete(0, tk.END)
             messagebox.showinfo(title = "Success", message = "Process finished")
         except Exception as ex:
             messagebox.showerror(title = "Process failed", message = ex)
